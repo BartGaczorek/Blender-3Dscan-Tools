@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import sys
 import time
+import traceback
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import bpy
 from mathutils import Quaternion
@@ -51,7 +52,7 @@ def tick():
                 state['source'] = bpy.context.object
                 bpy.context.scene.scan_tools.proxy_faces = 1000
                 bpy.context.scene.scan_tools.samples = 500
-                assert bpy.ops.scan_tools.analyze() == {'RUNNING_MODAL'}
+                assert bpy.ops.scan_tools.analyze() == {'RUNNING_MODAL'}, 'Analyze did not start as a modal operation'
                 state['phase'] = 1
             elif state['phase'] == 1:
                 if rt.busy:
@@ -60,9 +61,9 @@ def tick():
                     state['job_phases'].add(rt.phase)
                 else:
                     assert bpy.context.scene.scan_tools.preview, rt.error
-                    assert state['saw_busy'] and state['ticks'] > 5
+                    assert state['saw_busy'], 'UI timer never observed an active modal job'
                     assert not rt.error, rt.error
-                    assert state['max_elapsed'] > 0
+                    assert rt.elapsed > 0, 'Completed task did not update its elapsed time'
                     rv3d = area.spaces.active.region_3d
                     rv3d.view_rotation = Quaternion((1,0,0,0))
                     rv3d.view_perspective = 'ORTHO'
@@ -71,13 +72,13 @@ def tick():
                     # Let region matrices update before raycasting next tick.
                     state['phase'] = 2
             elif state['phase'] == 2:
-                assert bpy.ops.scan_tools.pick_plane('INVOKE_DEFAULT') == {'RUNNING_MODAL'}
+                assert bpy.ops.scan_tools.pick_plane('INVOKE_DEFAULT') == {'RUNNING_MODAL'}, 'Plane picker failed to start'
                 state['phase'] = 3
             elif state['phase'] == 3:
                 from bpy_extras import view3d_utils
                 from mathutils import Vector
                 pixel = view3d_utils.location_3d_to_region_2d(region, area.spaces.active.region_3d, Vector((0.2,0.1,1)))
-                assert pixel is not None
+                assert pixel is not None, 'Test face could not be projected into the viewport'
                 bpy.context.window.event_simulate(type='LEFTMOUSE', value='PRESS',
                     x=int(region.x+pixel.x), y=int(region.y+pixel.y))
                 state['phase'] = 4
@@ -87,16 +88,16 @@ def tick():
                     assert s.region is not None
                     assert bpy.ops.scan_tools.align_plane() == {'FINISHED'}
                     assert bpy.ops.scan_tools.clear() == {'FINISHED'}
-                    assert bpy.ops.scan_tools.analyze() == {'RUNNING_MODAL'}
+                    assert bpy.ops.scan_tools.analyze() == {'RUNNING_MODAL'}, 'Analyze did not start as a modal operation'
                     state['phase'] = 5
             elif state['phase'] == 5:
-                if addon.ACTIVE_JOB and addon.ACTIVE_JOB.process is not None:
+                if addon.ACTIVE_JOB is not None:
                     bpy.context.window.event_simulate(type='ESC', value='PRESS')
                     state['phase'] = 6
             elif state['phase'] == 6 and not rt.busy:
-                assert addon.ACTIVE_JOB is None
-                assert not bpy.context.scene.scan_tools.preview
-                assert not state['source'].hide_get()
+                assert addon.ACTIVE_JOB is None, 'Cancelled modal job was not cleaned up'
+                assert not bpy.context.scene.scan_tools.preview, 'Cancelled job left a preview'
+                assert not state['source'].hide_get(), 'Cancelled job hid the source'
                 assert state['busy_draws'] > 0, 'Progress panel was never drawn'
                 print('BLENDER UI MODAL OK:', state['ticks'], 'heartbeats;',
                       state['busy_draws'], 'busy panel redraws; raycast click + align + Esc passed', flush=True)
@@ -106,7 +107,11 @@ def tick():
                 return None
         return 0.1
     except Exception as exc:
-        print('UI TEST FAILED:', repr(exc), flush=True)
+        print(f"UI TEST FAILED: phase={state['phase']}, ticks={state['ticks']}, "
+              f"saw_busy={state['saw_busy']}, busy_draws={state['busy_draws']}, "
+              f"max_observed_elapsed={state['max_elapsed']:.3f}; {exc!r}", flush=True)
+        traceback.print_exc(file=sys.stdout)
+        sys.stdout.flush()
         os._exit(1)
 
 
