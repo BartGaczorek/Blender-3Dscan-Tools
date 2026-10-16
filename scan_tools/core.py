@@ -58,7 +58,7 @@ def reflect(points, normal, offset):
     return points - 2*((points @ normal-offset)[:, None])*normal
 
 
-def symmetry_fit(points, distance, starts, keep=0.8):
+def symmetry_fit(points, distance, starts, keep=0.8, progress=None):
     """Trimmed reflected-point to surface distance. distance takes Nx3 -> N.
 
     Coordinate descent fits normal (2 DOF) and offset (1 DOF).
@@ -75,11 +75,13 @@ def symmetry_fit(points, distance, starts, keep=0.8):
         return float(np.mean(np.partition(distances**2, count-1)[:count]))
 
     best = None
-    for start in starts:
+    for start_index, start in enumerate(starts):
         n = unit(start)
         d = float(center @ n)
         value = score(n, d)
-        for angle in (0.12, 0.04, 0.012, 0.004, 0.001):
+        for level, angle in enumerate((0.12, 0.04, 0.012, 0.004, 0.001)):
+            if progress:
+                progress((start_index*5+level)/(len(starts)*5), f"Symetria: kandydat {start_index+1}/{len(starts)}, krok {level+1}/5")
             for _ in range(12):
                 axis = np.eye(3)[np.argmin(abs(n))]
                 u = unit(np.cross(n, axis))
@@ -102,6 +104,8 @@ def symmetry_fit(points, distance, starts, keep=0.8):
             best = (n.copy(), d, value)
     n, d, value = best
     residuals = np.asarray(distance(reflect(points, n, d)))
+    if progress:
+        progress(1.0, "Dopasowanie symetrii zakończone")
     return n, d, {'trimmed_rms_relative': float(np.sqrt(value)/scale),
                   'p95_relative': float(np.percentile(residuals, 95)/scale),
                   'retained_fraction': keep}
@@ -134,3 +138,92 @@ def orientation(points, plane_normal=None, symmetry=None):
     transform[:3, :3] = rotation
     transform[:3, 3] = -rotation @ center
     return transform
+
+
+def triangle_plane(vertices, triangles):
+    """Area-weighted TLS of continuous triangle surfaces, independent of tessellation."""
+    tri = np.asarray(vertices, float)[triangles]
+    cross = np.cross(tri[:, 1]-tri[:, 0], tri[:, 2]-tri[:, 0])
+    areas = np.linalg.norm(cross, axis=1)*0.5
+    valid = areas > 1e-18
+    tri, cross, areas = tri[valid], cross[valid], areas[valid]
+    if len(tri) < 2 or areas.sum() <= 0:
+        raise ValueError('Wybierz co najmniej dwa niezdegenerowane trójkąty')
+    weights = areas / areas.sum()
+    center = np.sum(tri.mean(axis=1)*weights[:, None], axis=0)
+    # Subtract first: avoid catastrophic cancellation far from the world origin.
+    q = tri-center
+    total = q.sum(axis=1)
+    second = (np.einsum('tki,tkj->tij', q, q) +
+              np.einsum('ti,tj->tij', total, total))/12.0
+    covariance = np.einsum('t,tij->ij', weights, second)
+    values, vectors = np.linalg.eigh(covariance)
+    if values[1] < 1e-16*max(values[-1], 1e-30):
+        raise ValueError('Obszar jest zbyt wąski do wyznaczenia płaszczyzny')
+    normal = vectors[:, 0]
+    if np.dot(normal, cross.sum(axis=0)) < 0:
+        normal = -normal
+    deviations = (tri-center) @ normal
+    return {'normal': normal.tolist(), 'center': center.tolist(),
+            'rms': float(np.sqrt(max(0, values[0]))),
+            'max_deviation': float(np.abs(deviations).max()),
+            'area': float(areas.sum()), 'triangles': int(len(tri))}
+
+
+def triangle_adjacency(triangles):
+    """Edge-connected adjacency; coincident disconnected components stay separate."""
+    adjacency = [[] for _ in range(len(triangles))]
+    edges = {}
+    for face, tri in enumerate(triangles):
+        for a, b in ((tri[0], tri[1]), (tri[1], tri[2]), (tri[2], tri[0])):
+            edge = (min(int(a), int(b)), max(int(a), int(b)))
+            edges.setdefault(edge, []).append(face)
+    for faces in edges.values():
+        for a in faces:
+            adjacency[a].extend(b for b in faces if b != a)
+    return adjacency
+
+
+def planar_region(vertices, triangles, seed, angle_degrees=25, distance_relative=0.002,
+                  adjacency=None):
+    """Grow connected faces against a FIXED seed plane, not a drifting neighbour normal.
+
+    The fixed normal + slab prevent gradual flood-fill around cylindrical surfaces.
+    Grow and refit once to reduce the effect of scan noise in the clicked triangle.
+    """
+    if not 0 <= seed < len(triangles):
+        raise ValueError('Nieprawidłowy trójkąt')
+    tri = vertices[triangles]
+    cross = np.cross(tri[:, 1]-tri[:, 0], tri[:, 2]-tri[:, 0])
+    norms = np.linalg.norm(cross, axis=1)
+    normals = cross / np.maximum(norms[:, None], 1e-30)
+    if norms[seed] < 1e-18:
+        raise ValueError('Kliknięty trójkąt jest zdegenerowany')
+    adjacency = triangle_adjacency(triangles) if adjacency is None else adjacency
+    scale = float(np.linalg.norm(np.ptp(vertices, axis=0)))
+    threshold = max(scale*distance_relative, 1e-12)
+    cosine = np.cos(np.deg2rad(angle_degrees))
+    normal = normals[seed]
+    center = tri[seed].mean(axis=0)
+    region = [seed]
+    for _ in range(2):
+        accepted = ((normals @ normal >= cosine) &
+                    (np.max(np.abs((tri-center) @ normal), axis=1) <= threshold))
+        accepted[seed] = True
+        visited = {seed}
+        stack = [seed]
+        while stack:
+            face = stack.pop()
+            for neighbour in adjacency[face]:
+                if neighbour not in visited and accepted[neighbour]:
+                    visited.add(neighbour)
+                    stack.append(neighbour)
+        region = sorted(visited)
+        if len(region) < 2:
+            raise ValueError('Za mały obszar. Kliknij wnętrze ścianki lub zwiększ tolerancję')
+        fit = triangle_plane(vertices, triangles[region])
+        normal, center = np.array(fit['normal']), np.array(fit['center'])
+    fit['faces'] = region
+    fit['rms_relative'] = fit['rms']/max(scale, 1e-30)
+    fit['max_deviation_relative'] = fit['max_deviation']/max(scale, 1e-30)
+    return fit

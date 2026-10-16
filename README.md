@@ -1,71 +1,95 @@
-# CadXpert Scan Tools
+# CadXpert Scan Tools — 0.2.0
 
-Eksperymentalny dodatek do Blendera: orientacja skanów STL, dopasowanie przybliżonej symetrii i decymacja osobnego wyniku. Wersja 0.1.0 jest punktem startowym do testów na rzeczywistych skanach, nie zweryfikowanym narzędziem produkcyjnym.
+Dodatek Blendera do ustawiania skanów i redukcji osobnego wyniku. Wersja 0.2 skupia się na ręcznym bazowaniu z pomocą geometrii: kopia robocza → kliknięcie ścianki → płaszczyzna XY → dopasowanie symetrii z lustrem na żywo. Oryginał pozostaje zachowany. Domyślna automatyczna orientacja jest wyłączona, ponieważ PCA/RANSAC z v0.1 nie rozpoznaje wiarygodnie intencji projektowej.
 
-Docelowe API: Blender 4.2+. Referencyjny test GitHub Actions używa 4.2.0; zgodność z nowszymi wersjami wymaga sprawdzenia. NumPy jest jedyną zależnością algorytmów w Blenderze; SciPy służy wyłącznie testom poza Blenderem. Dodatek pracuje lokalnie, bez wysyłania skanów.
+## Instalacja / aktualizacja
 
-## Szybki start
+1. Zapisz scenę `.blend`. Usuń pomocniczy podgląd v0.1 przyciskiem dodatku; zachowaj oryginalny skan.
+2. Wyłącz poprzednią wersję dodatku. W razie pozostawionych klas zrestartuj Blendera.
+3. Preferences → Get Extensions → menu → Install from Disk → `dist/cadxpert_scan_tools-0.2.0.zip`. To wewnętrzny instalator, nie całe repozytorium. Jeśli Blender zgłosi istniejący identyfikator, usuń poprzednie rozszerzenie i zainstaluj nowe.
+4. Włącz dodatek. Panel w widoku 3D: `N` → **Scan Tools**. Nagłówek powinien pokazywać **0.2.0**.
 
-1. Rozpakuj paczkę repozytorium. W `dist/` znajduje się osobny instalacyjny `cadxpert_scan_tools-0.1.0.zip`.
-2. Blender → Edit → Preferences → Get Extensions → menu w prawym górnym rogu → Install from Disk. Wskaż **instalacyjny ZIP**, a nie paczkę całego repozytorium. Włącz dodatek, jeżeli nie został włączony automatycznie.
-3. File → Import → STL. Jednostki i skalę importu ustaw świadomie: STL nie zapisuje jednostki długości.
-4. Zaznacz skan w Object Mode. W widoku 3D naciśnij `N` → **Scan Tools**.
-5. Zaznacz „Szukaj symetrii” tylko dla części, dla których ma to sens. Opcjonalnie wybierz przybliżoną normalną symetrii w bieżącym układzie świata (X/Y/Z), zamiast trzech startów PCA.
-6. Kliknij **Analizuj zaznaczony skan**. Oryginał zostanie ukryty; podgląd bazuje na kopii do około 100 tys. trójkątów.
-7. Kliknij **Odśwież lustro kontrolne X=0**. Obejrzyj nałożenie niebieskiej i pomarańczowej siatki w Solid Shading. Obracaj/przesuwaj niebieski obiekt jak zwykle (`R`, `G`); po każdej korekcie odśwież lustro. Lustro w v0.1 jest statyczne.
-8. Oceń widoki ortogonalne. Możesz obrócić podgląd o 180° wokół X lub Z, aby zamienić górę/dół lub przód/tył przy zachowaniu płaszczyzny symetrii X=0. Obrót wokół Z o 90° zmienia docelową oś symetrii — lustro X przestaje wtedy być właściwym testem.
-9. Ustaw cel, domyślnie 1 000 000 trójkątów, i kliknij **Akceptuj i utwórz wynik**. Powstaje `NAZWA_READY` na podstawie oryginału, z zatwierdzonym przekształceniem i redukcją. Mniejszy skan nie jest sztucznie zagęszczany.
-10. Zaznacz wyłącznie wynik → File → Export → STL → zaznaczone obiekty. Raport JSON znajdziesz w Text Editorze Blendera (`NAZWA_READY_report.json`).
+Blender 4.2+; lokalnie testowany na Blenderze 4.2.0 pod Linuksem. Windows, macOS i nowsze wersje wymagają osobnej weryfikacji. Obliczenia działają lokalnie. Dodatek uruchamia drugi proces z tej samej instalacji Blendera i korzysta z katalogu tymczasowego; nie instaluje pakietów i nie wysyła skanów przez sieć.
 
-Przycisk **Usuń podgląd / wróć do oryginału** usuwa pomocnicze obiekty i pokazuje źródło; zachowuje już utworzony wynik. Operacje mają Undo. Nie edytuj geometrii podglądu w Edit Mode — wynik uwzględnia jedynie jego transformację obiektową. Nie zmieniaj też źródła pomiędzy analizą a akceptacją. Po takiej zmianie ponów analizę.
+## Praca krok po kroku
 
-## Co jest zaimplementowane
+### 1. Kopia robocza i postęp
 
-- Niezależna kopia do analizy; oryginalna siatka i jej transformacje pozostają zachowane.
-- Obliczenia na próbkach losowanych proporcjonalnie do powierzchni trójkątów, nie do zagęszczenia wierzchołków.
-- PCA jako orientacja startowa, RANSAC + dopasowanie najmniejszych kwadratów jako przybliżona płaska ścianka.
-- Dopasowanie normalnej i przesunięcia płaszczyzny symetrii do siatki roboczej przez odległości do powierzchni BVH.
-- Odrzucenie domyślnie 20% największych reszt w funkcji celu; nie jest to automatyczne rozpoznanie semantyczne asymetrycznych detali.
-- Ustawienie wybranej symetrii jako X=0. Płaska ścianka wyznacza kierunek Z w pozostałym stopniu swobody, o ile nie koliduje z normalną symetrii.
-- Statyczne lustro kontrolne z poprawionym windingiem trójkątów.
-- Osobny wynik, redukcja Decimate Collapse, raport, testy algorytmów i workflow CI.
+Zaimportuj STL, sprawdź jednostki i zaznacz źródło w Object Mode. Źródło powinno być samodzielną lokalną siatką bez rodzica, modyfikatorów, constraints i animacji.
 
-## Czego v0.1 jeszcze nie robi
+Ustaw **Trójkąty kopii roboczej**, domyślnie 50 000, i kliknij **Przygotuj kopię roboczą**. Powstaje lekka kopia z wycentrowanym origin; oryginał zostaje ukryty po odebraniu wyniku. Mniejszy skan nie jest zagęszczany.
 
-- Nie przedstawia listy wielu ścianek i wielu rozwiązań do wyboru. RANSAC zwraca jedną propozycję; może ona być zła, zwłaszcza na krzywiznach.
-- Nie ma wskazywania obszaru bazowego, wykluczania fragmentów, batch processing ani automatycznego eksportu.
-- Nie sprawdza tolerancji wymiarowej po decymacji. Cel liczby trójkątów jest przybliżony; zachowanie otworów i krawędzi trzeba obejrzeć.
-- Nie wymusza kontaktu podstawy z Z=0: środek próbkowanej powierzchni trafia w okolice początku układu, a płaszczyzna symetrii dokładnie w X=0.
-- Nie rozpoznaje intencji projektowej. Kula, walec, element z wieloma symetriami, ubytki skanu czy duże asymetryczne fragmenty mogą dać niejednoznaczny wynik.
-- Analiza jest synchroniczna i może blokować interfejs. Natywna decymacja wymaga chwilowo kopii pełnej siatki; bardzo duży skan wymaga odpowiedniej pamięci RAM.
-- Przyjmuje samodzielny obiekt siatkowy bez rodzica, modyfikatorów, constraints i animacji. Nie naprawia dziur, non-manifold ani błędów skanu.
-- Metryki raportu opisują dopasowanie automatyczne na kopii roboczej, przed ręczną korektą. RMS/P95 nie są certyfikatem jakości ani dokładności wymiarowej.
+Panel pokazuje bieżący etap, pasek etapów, czas pracy i **Anuluj**; `Esc` także anuluje. Decymacja oraz opcjonalne dopasowanie działają w osobnym procesie, więc obliczenia nie zajmują głównej pętli UI. Pasek przedstawia ważone etapy zadania, nie dokładny udział czasu. Blender nie udostępnia mierzalnego procentu dla natywnego Decimate: na tym etapie wyświetlany jest aktywny wskaźnik i „ETA nieznane”, a nie fikcyjne odliczanie. Dokładnego czasu pozostałego nie obiecujemy.
 
-## Rozwój całkowicie przez GitHub
+Ważne ograniczenie: zapis wejściowego snapshotu oraz odebranie gotowej siatki muszą wykonać się w głównym Blenderze. Przy bardzo dużym pliku mogą nadal spowodować chwilową pauzę. Anulowanie nie przerwie trwającego synchronicznego zapisu, lecz zadziała po jego zakończeniu. Potrzebne są RAM, wolne miejsce w katalogu tymczasowym i działająca ścieżka `bpy.app.binary_path`. Zamknięcie Blendera awaryjnie może pozostawić pliki tymczasowe.
 
-Nie utworzyliśmy zdalnego repozytorium w Twoim koncie. Poniższa procedura nie wymaga lokalnej instalacji Gita ani VS Code.
+### 2. Wybór płaskiej bazy
 
-1. Na GitHubie utwórz **prywatne** repozytorium, np. `cadxpert-scan-tools`, z README.
-2. Rozpakuj tę paczkę, wejdź do katalogu `cadxpert-scan-tools` i przez **Add file → Upload files** prześlij jego zawartość bez dodatkowego katalogu nadrzędnego. Uwzględnij `.github/`, `.gitignore` i `AGENTS.md`. Katalogu `dist/` nie trzeba commitować — będzie budowany automatycznie.
-3. Commituj zmiany. W **Actions** odszukaj „Test and build Blender extension”. Workflow uruchamia testy, test Blendera i tworzy instalacyjny ZIP. Jeśli workflow nie jest widoczny, sprawdź, czy `.github/workflows/ci.yml` rzeczywiście trafił do repozytorium i czy Actions są włączone.
-4. Po zielonym zakończeniu pobierz artifact `cadxpert-scan-tools-extension`. Rozpakuj zewnętrzne archiwum artifactu; wewnętrzny ZIP to instalator Blendera.
-5. Każdą kolejną zmianę opisuj jako Issue. Edycję rób przez edytor GitHuba lub **Code → Codespaces → Create codespace on main**. Pracuj na osobnej gałęzi i otwieraj Pull Request; po testach scalaj do `main`.
-6. Przykładowe polecenie do agenta programującego w repozytorium: „Przeczytaj AGENTS.md i docs/ROADMAP.md. Zrealizuj etap 1: wybór ścianki z zaznaczonych trójkątów. Dodaj test na zaszumionej płaszczyźnie. Nie zmieniaj oryginalnego skanu.”
-7. Testy matematyczne i pakowanie wykonują się na GitHubie. Ocenę wizualną oraz obsługę własnych dużych STL wykonujesz w lokalnym Blenderze; zwykły edytor GitHuba nie uruchamia jego viewportu.
-8. Po udanym teście zaakceptowanej wersji utwórz tag/release `v0.1.0` i dołącz instalacyjny ZIP. Nie włączono automatycznego publikowania release'ów.
+Obróć widok tak, aby widzieć dolną ściankę. Kliknij **Kliknij płaską ściankę**, następnie kliknij jej wnętrze. Lustro jest na czas wyboru ukryte, a po zakończeniu przywracane.
 
-Nie umieszczaj poufnych skanów w Git. `.gitignore` pomaga przy pracy przez Git/Codespaces, ale nie blokuje ręcznego uploadu przez stronę. Kod paczki jest GPL-3.0-or-later, zgodnie z manifestem rozszerzenia; licencja nie zmienia własności skanów.
+Region rośnie tylko po połączonych krawędziami trójkątach, z kontrolą:
 
-## Testy i budowanie poza GitHubem (opcjonalne)
+- kąta normalnych względem wspólnej normalnej (domyślnie 25°);
+- odległości wierzchołków od wspólnej płaszczyzny (domyślnie 0.002 przekątnej modelu).
+
+Płaszczyzna zostaje dopasowana ponownie do regionu. Stała baza porównania ogranicza stopniowe przejście zaznaczenia po walcu, typowe dla samego porównywania sąsiadujących normalnych. Zaznaczony region jest zielony; panel pokazuje RMS i maksymalną odchyłkę oraz względny RMS. Są to wskaźniki płaskości obszaru na kopii roboczej, a nie świadectwo dokładności skanu. Wartości liniowe są w jednostkach Blendera (BU); STL nie definiuje jednostek.
+
+Jeżeli zaznaczenie jest za małe, zwiększ próg normalnych lub grubość pasa i kliknij ponownie. Jeżeli przechodzi na krzywiznę, zmniejsz tolerancje. Region zależy od klikniętego miejsca i spójności siatki. Niepołączone fragmenty pozostają osobne.
+
+Alternatywa: wybierz niebieską kopię, `Tab` → Edit Mode → zaznacz ścianki fragmentu (np. Circle Select) → **Płaszczyzna z zaznaczonych ścianek**. Dodatek dopasuje płaszczyznę do całego zaznaczenia i wróci do Object Mode. W Edit Mode zaznaczaj, ale nie przebudowuj geometrii podglądu — zmiany jego geometrii nie przechodzą na oryginalny wynik.
+
+Nie ma jeszcze automatycznej listy wszystkich face groups ani rankingu wszystkich ścianek. Wersja 0.2 robi interaktywne rozrastanie jednej wskazanej grupy.
+
+### 3. Wyrównanie i lustro na żywo
+
+Wybierz **-Z (dolna ścianka)** lub **+Z (górna ścianka)** i kliknij **Wyrównaj bazę do XY / Z=0**. Dopasowana płaszczyzna trafia w Z=0. Wybór kierunku opiera się na windingu siatki; jeśli część stoi do góry nogami, zmień kierunek i wyrównaj ponownie.
+
+Lustro uruchamia się automatycznie po przygotowaniu kopii. **Pokaż / ukryj** steruje jego widocznością. Niebieski obiekt roboczy i pomarańczowe odbicie nakładają się podczas `G`, `R` i `S`, bez klikania odświeżania. Odbicie jest względem stałej globalnej płaszczyzny **X=0**, niezależnie od origin i kolejności obrotów. Odbicie nie jest przeznaczone do edycji ani eksportu.
+
+Po ustaleniu dolnej bazy do dopracowania symetrii używaj głównie **G X** i **R Z**: zachowują płaszczyznę XY, pozwalając ustawić symetrię względem X=0. Swobodne obroty X/Y mogą ponownie przechylić podstawę — wtedy wyrównaj ją ponownie. Unikaj `S`, jeśli rozmiar skanu ma pozostać niezmieniony.
+
+W Solid Shading ustawiane są kolory obiektów. Lustro współdzieli tę samą lekką siatkę: nie powiela milionów trójkątów ani nie przebudowuje geometrii podczas przeciągania. Odbicie nie jest naprawianiem ani wymuszaniem symetrii oryginalnej geometrii.
+
+### 4. Wynik
+
+Ustaw **Docelowe trójkąty**, domyślnie 1 000 000, i kliknij **Akceptuj i utwórz wynik**. Drugi proces bierze oryginalną geometrię, stosuje pełne przygotowanie i ręczne ustawienie kopii, a następnie redukuje do przybliżonego celu. Powstaje `_READY` z zatwierdzoną macierzą obiektu. Oryginalna siatka i transformacje źródła pozostają zachowane.
+
+Raport jest w Text Editorze (`_READY_report.json`). Zaznacz wyłącznie `_READY` i eksportuj STL z opcją zaznaczonych obiektów. Przycisk **Usuń podgląd / wróć do źródła** usuwa pomocnicze obiekty, zachowując już utworzony wynik.
+
+Nie zmieniaj źródła w trakcie pracy. Kontrola macierzy i liczby elementów nie wykrywa wszystkich możliwych edycji współrzędnych. W razie zmiany źródła przygotuj kopię od początku. Decymacja nadal nie mierzy odchyłki wymiarowej; obejrzyj otwory, krawędzie i drobne cechy.
+
+## GitHub — aktualizacja istniejącego repozytorium
+
+Nie trzeba tworzyć nowego repozytorium ani instalować integracji z ChatGPT.
+
+1. Rozpakuj nową paczkę. W istniejącym repozytorium użyj **Add file → Upload files** i prześlij zawartość `scan_tools/`, `tests/`, `docs/` oraz pliki główne, zachowując foldery.
+2. Nie przesyłaj katalogu `dist/` ani plików `.blend`/STL.
+3. Zaktualizuj również `.github/workflows/ci.yml`. Jeśli upload ukrytego folderu nie zadziała, otwórz istniejący plik na GitHubie → ołówek → wklej zawartość nowego `ci.yml`.
+4. Commit najlepiej na nowej gałęzi, np. `feature/scan-tools-v020`, i Pull Request do `main`.
+5. Workflow testuje matematykę, walidację rozszerzenia, integrację Blendera oraz modalny UI. Po zielonym wykonaniu pobierz artifact `cadxpert-scan-tools-extension`.
+6. Artifact zawiera wewnętrzny instalacyjny ZIP. Wersja w nagłówku panelu i manifeście powinna być 0.2.0.
+
+W paczce jest też `UPDATE-v0.2.0.patch`. W Codespaces, po przesłaniu tego pliku do głównego katalogu repozytorium, możesz użyć:
+
+```bash
+git switch -c feature/scan-tools-v020
+git apply --check UPDATE-v0.2.0.patch
+git apply UPDATE-v0.2.0.patch
+```
+
+Patch jest względem pierwotnej paczki v0.1.0. Jeśli repo było zmienione, `--check` może zgłosić konflikt; nie wymuszaj wtedy aplikacji. Po zastosowaniu sprawdź zmiany, commituj i utwórz PR. Sam patch nie musi być commitowany.
+
+## Testy / budowanie
 
 ```bash
 python -m pip install numpy scipy
 python -m unittest discover -s tests -p 'test_*.py' -v
-python scripts/build.py
 blender --command extension validate scan_tools
 blender --background --factory-startup --python-exit-code 1 --python tests/blender_smoke.py
+blender --background --factory-startup --python-exit-code 1 --python tests/blender_features.py
+# Test rzeczywistego UI pod Linuksem (wymaga Xvfb):
+xvfb-run -a blender --enable-event-simulate --factory-startup --python-exit-code 1 --python tests/blender_ui.py
+python scripts/build.py
 ```
 
-Budowanie wymaga Python 3.11+ (tomllib). Blender korzysta z własnego Pythona. W środowisku przygotowania paczki przeszło 5 testów matematycznych; nie było zainstalowanego Blendera. Test integracyjny i walidacja manifestu są przygotowane do uruchomienia w Actions; nie należy traktować ich jako już zaliczonych.
-
-Szczegółowy opis automatyki: [docs/ALGORITHM.md](docs/ALGORITHM.md). Kolejność dalszej pracy: [docs/ROADMAP.md](docs/ROADMAP.md).
+Kod: GPL-3.0-or-later. Skany pozostają własnością użytkownika. `.gitignore` nie zabezpiecza przed ręcznym przesłaniem poufnego skanu przez stronę GitHuba.

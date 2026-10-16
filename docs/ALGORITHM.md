@@ -1,44 +1,35 @@
-# Automatyka i udział użytkownika
+# Algorytmy v0.2
 
-## Zalecana forma docelowa
+## Podział pracy
 
-Dodatek Blendera jako Extension, z panelem i oddzielonym modułem obliczeniowym. Jeden skan → propozycje baz → podgląd → akceptacja → wynik. Dopiero po zebraniu dobrych przypadków testowych: tryb wsadowy i headless CLI. Sam jednorazowy skrypt utrudnia iterację, ocenę orientacji i powtarzalne ustawienia.
+Główna instancja Blendera zachowuje źródło i obsługuje UI. Modalny operator aktualizuje panel na zdarzeniach TIMER, a osobny proces tej samej instalacji Blendera wykonuje decymację i opcjonalną analizę. Dane są przenoszone przez lokalne pliki tymczasowe `.blend` i JSON. Nie używamy bpy w dowolnym wątku Pythona.
 
-GitHub przechowuje kod, wymagania, PR-y, testy i wydania. Obliczenia na skanach wykonuje Blender na komputerze użytkownika, bez serwera i API. GitHub Actions sprawdza procedurę na małych syntetycznych siatkach.
+Natywny Decimate nie udostępnia callbacku z procentem. W tym etapie pokazujemy aktywność i czas; pasek całego zadania opisuje umowne wagi etapów. Zapis snapshotu i odczyt wyniku są synchroniczne i mogą chwilowo zatrzymać UI. Esc/anulowanie zatrzymuje proces roboczy, ale nie przerywa atomowo trwającego synchronicznego IO. Po normalnym zakończeniu/anulowaniu pliki są usuwane. Zamknięcie awaryjne może pozostawić pliki tymczasowe.
 
-## Interpretacja ręcznego workflow
+## Kopia i układy
 
-„Geometry to Origin” przesuwa geometrię do aktualnego origin obiektu, który nie zawsze jest w (0,0,0). „Apply All Transforms” zachowuje położenie geometrii w świecie i zapisuje transformację w siatce; nie wyznacza geometrycznego środka. Dlatego dodatek liczy środek i docelowy układ jawnie, niezależnie od kursora 3D i wcześniejszego origin.
+Oryginalny punkt lokalny `p` trafia do wyniku jako `M_manual @ M_prepare @ M_source @ p`. Początkowe przygotowanie jest zapisane w geometrii kopii; jej macierz obiektu startuje jako jednostkowa, aby pivot był w wycentrowanym modelu. Domyślnie `M_prepare` jest przesunięciem o środek bbox. Opcjonalnie zawiera orientację PCA/RANSAC i dopasowanie symetrii z v0.1.
 
-Lustro z constraints jest wizualnym sposobem szukania płaszczyzny symetrii. Nie trzeba optymalizować dwóch pełnych siatek ani wszystkich sześciu stopni swobody. Płaszczyzna ma normalną o dwóch stopniach swobody i jedno przesunięcie. Symetria nie ustala przesunięć w jej obrębie ani obrotu wokół jej normalnej — te stopnie swobody wymagają bazy, głównej osi lub decyzji użytkownika.
+„Geometry to Origin” nie gwarantuje położenia w (0,0,0), jeżeli origin był gdzie indziej. Apply Transforms nie wyznacza środka geometrycznego. Jawne macierze pozwalają przenosić operacje na oryginalną siatkę bez kopiowania geometrii proxy do wyniku.
 
-## Etapy
+## Interaktywna baza
 
-| Etap | Automatyka | Interakcja |
-|---|---|---|
-| Wejście | Sprawdzenie obiektu i przygotowanie kopii | Import STL, jednostki, wybór skanu |
-| Przygotowanie | Redukcja kopii roboczej i próbkowanie powierzchni | Zmiana jakości tylko w trudnych przypadkach |
-| Bazy | PCA; przybliżona płaszczyzna RANSAC, odpornie na szum | Docelowo wybór ścianki lub zaznaczenie regionu; v0.1 ocena i korekta ręczna |
-| Symetria | Start z 3 osi PCA lub wskazanej osi; numeryczne dopasowanie płaszczyzny | Włączenie symetrii i ewentualny wybór osi startowej |
-| Ocena | RMS po odcięciu największych reszt i P95 wszystkich reszt | Ocena intencjonalnej symetrii i kierunków góra/przód |
-| Wynik | Przeniesienie transformacji na kopię oryginału, decymacja, raport | Akceptacja, ocena detali, eksport |
+Raycast na kopii wskazuje trójkąt startowy. Adjacency jest oparta na współdzielonych krawędziach. Kandydat musi mieć normalną w zadanym kącie do wspólnej normalnej oraz wszystkie wierzchołki w pasie o określonej grubości względem wspólnej płaszczyzny. Porównanie tylko kolejnych normalnych sąsiadów mogłoby stopniowo przejść po walcu; porównanie do wspólnej bazy ogranicza ten problem. Po rozroście dopasowujemy płaszczyznę i powtarzamy rozrost raz.
 
-## Matematyka
+Dopasowanie TLS jest ważone powierzchnią i integruje drugi moment powierzchni każdego trójkąta. Nie zależy więc wyłącznie od nierównego zagęszczenia wierzchołków. Środek i kowariancja są liczone po odjęciu centroidu, co ogranicza utratę dokładności przy dużych współrzędnych. Najmniejsza wartość własna kowariancji wyznacza RMS od płaszczyzny; normalna dostaje znak zgodny z sumą zorientowanych pól trójkątów. Maksymalna odchyłka jest liczona po wierzchołkach zaznaczonego obszaru.
 
-Dla jednostkowej normalnej n i przesunięcia d płaszczyzna spełnia n·p=d. Odbicie punktu to p'=p−2(n·p−d)n. Dla punktów odbitych liczymy odległość do najbliższej powierzchni trójkątowej skanu roboczego (BVH), a nie różnicę indeksów wierzchołków.
+Zielony obszar i metryki umożliwiają użytkownikowi ocenę, czy wybrano zamierzoną ściankę. W v0.2 nie ma automatycznej segmentacji wszystkich regionów, rankingu ani semantycznego rozpoznawania podstawy. Dziury, rozłączna siatka i duży szum mogą wymagać ręcznego zaznaczenia w Edit Mode.
 
-Funkcja celu to średni kwadrat najmniejszych domyślnie 80% odległości. Zapobiega dominacji pojedynczego dużego występu, ale może także ukryć ważny fragment: użytkownik musi ocenić wynik. Dobry docelowy wariant dodaje zgodność normalnych, obustronne pokrycie, minimalny udział powierzchni po obu stronach płaszczyzny i maski obszarów. Nie są one zaimplementowane w v0.1.
+Przy wyrównaniu normalna zostaje przeliczona do świata macierzą odwrotnie transponowaną. Obrót dopasowuje ją do ±Z, zachowując środek zaznaczenia; następnie przesunięcie ustawia dopasowaną płaszczyznę w Z=0. Jest to płaszczyzna dopasowania — szum nie zostaje spłaszczony, a pojedyncze wierzchołki mogą leżeć nieznacznie poniżej Z=0.
 
-W v0.1 lokalny coordinate descent zmienia normalną i przesunięcie w malejących krokach. Trzy starty PCA zwiększają szansę znalezienia właściwego minimum, lecz go nie gwarantują. Nie jest to pełna globalna optymalizacja ani klasyczny sztywny ICP.
+## Interaktywne lustro
 
-Płaska ścianka jest wykrywana przez RANSAC na punktach powierzchniowych, a następnie dopasowana przez TLS/PCA. „Płaska” oznacza pas o zadanej tolerancji, nie identyczne normalne trójkątów. Tolerancja 0.006 przekątnej jest startowym parametrem do kalibracji, nie tolerancją produkcyjną. W docelowym narzędziu lepsze będzie rozrastanie regionów z kontrolą odległości i normalnych oraz wybór kilku kandydatów. Obecny próg 12% poparcia odrzuca słabe propozycje, ale nie odróżni każdej krzywizny od ścianki.
+Nie optymalizujemy dwóch pełnych siatek i nie przebudowujemy mesha co klatkę. Obiekt kontrolny współdzieli siatkę kopii. Jego parent ma macierz `S=diag(-1,1,1,1)`, a constraint Copy Transforms kopiuje macierz świata podglądu do lokalnego układu obiektu kontrolnego. Otrzymujemy dokładnie `M_mirror = S @ M_preview`.
 
-Priorytetem orientacji jest płaszczyzna symetrii → X=0. Normalna znalezionej ścianki wyznacza kierunek Z po projekcji na płaszczyznę symetrii. Przy sprzecznych bazach nie da się jednocześnie spełnić obu warunków dokładnie. RANSAC wybiera kierunek normalnej na zewnątrz od środka próbki; użytkownik może odwrócić górę/dół. Centrowanie wykorzystuje średnią próbkowanej powierzchni, nie środek masy objętościowej.
+Działa to dla przesunięć, dowolnej kolejności obrotów, kwaternionów i skalowania. Nie wymaga odwracania znaków konkretnych kątów Eulera ani własnego handlera transformacji. Ujemny determinant pozostaje transformacją diagnostycznego obiektu; nie odwracamy windingu współdzielonej siatki, co uszkodziłoby podgląd. Negatywny determinant przy faktycznym zapisie geometrii wynikowej jest obsługiwany oddzielnie przez zmianę windingu.
 
-## Decymacja i bezpieczeństwo danych
+Płaszczyzna lustra to zawsze globalne X=0. G X i R Z po ustaleniu dolnej bazy zachowują jej wyrównanie do XY. R X/R Y mogą bazę przechylić. Lustro pokazuje odchyłki geometryczne, nie dowodzi intencjonalnej symetrii ani nie naprawia skanu.
 
-Kopia robocza powstaje przed dopasowaniem, wynik końcowy zawsze z oryginalnej siatki. Transformacja jest sztywna (bez zmiany rozmiaru), chyba że użytkownik sam przeskaluje podgląd. Reflection służy wyłącznie do analizy i kontroli, nie zastępuje finalnej geometrii.
+## Opcjonalna automatyczna symetria
 
-Cel to liczba trójkątów, nie ogólnych poligonów. Decimate Collapse z ratio target/current daje wynik przybliżony. W v0.1 nie ma pomiaru odchyłki powierzchni przed/po; milion trójkątów nie zapewnia określonej dokładności. Dla dużych skanów trzeba zmierzyć czas i szczytowe zużycie RAM; kopiowanie pełnej siatki i natywna decymacja mogą być kosztowniejsze od samego dopasowania.
-
-Nie należy przebudowywać skanu przez voxel remesh jako domyślnego kroku, bo zmienia powierzchnię. Nie należy wymuszać idealnej symetrii geometrii — celem jest orientacja skanu z jego rzeczywistymi odchyłkami.
+Pozostaje algorytm v0.1: próbki ważone polem trójkątów, starty PCA, odbicie względem `n·p=d`, odległości próbka→powierzchnia BVH, minimum średnich kwadratów najmniejszych 80% reszt. W v0.2 dostaje callback etapów. Nie zmieniono go w rozwiązanie globalne; na trudnych częściach może wybrać niewłaściwą symetrię. Dlatego automatyczne ustawienie jest domyślnie wyłączone.

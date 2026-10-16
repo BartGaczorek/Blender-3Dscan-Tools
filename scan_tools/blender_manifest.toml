@@ -1,9 +1,12 @@
 schema_version = "1.0.0"
 id = "cadxpert_scan_tools"
-version = "0.1.0"
+version = "0.2.0"
 name = "CadXpert Scan Tools"
-tagline = "Preview scan orientation and decimate a separate result"
+tagline = "Align scan bases with live mirroring and background reduction"
 maintainer = "CadXpert"
 type = "add-on"
 blender_version_min = "4.2.0"
 license = ["SPDX:GPL-3.0-or-later"]
+
+[permissions]
+files = "Store temporary mesh snapshots and local progress reports"

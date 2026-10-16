@@ -21,6 +21,7 @@ s.proxy_faces = 1000
 s.target = 300
 assert bpy.ops.scan_tools.analyze() == {'FINISHED'}
 assert s.preview and s.source == source
+assert s.mirror is not None  # Live mirror is created automatically
 assert bpy.ops.scan_tools.mirror() == {'FINISHED'}
 assert s.mirror is not None
 assert bpy.ops.scan_tools.finish() == {'FINISHED'}
