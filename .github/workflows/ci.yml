@@ -1,0 +1,31 @@
+name: Test and build Blender extension
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install numpy scipy
+      - run: python -m unittest discover -s tests -p 'test_*.py' -v
+      - name: Install Blender 4.2.0 reference runtime
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxrender1 libxi6 libxfixes3 libxkbcommon0 libsm6 libgl1 libegl1
+          curl --fail --location --retry 3 https://download.blender.org/release/Blender4.2/blender-4.2.0-linux-x64.tar.xz -o /tmp/blender.tar.xz
+          tar -xf /tmp/blender.tar.xz -C /tmp
+          echo /tmp/blender-4.2.0-linux-x64 >> "$GITHUB_PATH"
+      - run: blender --command extension validate scan_tools
+      - run: blender --background --factory-startup --python-exit-code 1 --python tests/blender_smoke.py
+      - run: python scripts/build.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cadxpert-scan-tools-extension
+          path: dist/*.zip
